@@ -29,10 +29,22 @@ function parseHash(hash) {
 async function fetchLatestRelease(repo) {
   try {
     const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`)
-    return await res.json()
-  } catch {
-    return null
-  }
+    if (res.ok) {
+      const data = await res.json()
+      if (data?.assets?.length > 0) return data
+    }
+  } catch { /* ignore */ }
+
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=5`)
+    if (res.ok) {
+      const list = await res.json()
+      const found = Array.isArray(list) && list.find(r => r?.assets?.length > 0)
+      if (found) return found
+    }
+  } catch { /* ignore */ }
+
+  return null
 }
 
 function getAssetUrl(release, pattern) {
@@ -53,7 +65,19 @@ function PlatformIcon({ platform }) {
 }
 
 function DownloadCard({ href, label, sub, icon: Icon, accent }) {
-  if (!href) return null
+  if (!href) {
+    return (
+      <div className="flex items-center gap-4 border border-white/5 bg-white/[0.03] rounded-xl px-5 py-4 opacity-40 cursor-not-allowed">
+        <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center shrink-0">
+          <Icon className="w-5 h-5 text-slate-500" />
+        </div>
+        <div className="text-left">
+          <p className="text-slate-400 font-semibold">{label}</p>
+          <p className="text-slate-600 text-sm">Not available in this release</p>
+        </div>
+      </div>
+    )
+  }
   return (
     <a href={href} target="_blank" rel="noreferrer"
       className={`flex items-center gap-4 border rounded-xl px-5 py-4 transition-all group
@@ -78,6 +102,7 @@ export default function InvitePage() {
   const [role, setRole] = useState(null)
   const [platform, setPlatform] = useState(null)
   const [release, setRelease] = useState(null)
+  const [releaseFetched, setReleaseFetched] = useState(false)
   const [deepLinkAttempted, setDeepLinkAttempted] = useState(false)
 
   useEffect(() => {
@@ -102,7 +127,7 @@ export default function InvitePage() {
     const deepLink = `${scheme}://invite?access_token=${encodeURIComponent(accessToken)}&refresh_token=${encodeURIComponent(refreshToken)}&type=invite`
 
     const repo = roleParam === 'manager' ? ADMIN_REPO : AGENT_REPO
-    fetchLatestRelease(repo).then(rel => setRelease(rel))
+    fetchLatestRelease(repo).then(rel => { setRelease(rel); setReleaseFetched(true) })
 
     setStatus(STATUS.TRYING_DEEPLINK)
     setDeepLinkAttempted(true)
@@ -229,16 +254,40 @@ export default function InvitePage() {
               </div>
 
               <div className="flex flex-col gap-3 mb-8">
-                {release
-                  ? getDownloadLinks().map(dl => <DownloadCard key={dl.label} {...dl} />)
-                  : (
+                {!releaseFetched
+                  ? (
                     <div className="text-center py-8">
                       <RefreshCw className="w-5 h-5 text-blue-400 animate-spin mx-auto mb-2" />
                       <p className="text-slate-500 text-sm">Fetching latest release…</p>
                     </div>
                   )
+                  : release
+                    ? getDownloadLinks().map(dl => <DownloadCard key={dl.label} {...dl} />)
+                    : (
+                      <a
+                        href={`https://github.com/${isManager ? ADMIN_REPO : AGENT_REPO}/releases`}
+                        target="_blank" rel="noreferrer"
+                        className="flex items-center justify-center gap-3 border border-blue-500/40 bg-blue-500/10 hover:bg-blue-500/20 rounded-xl px-5 py-4 transition-all">
+                        <Download className="w-5 h-5 text-blue-400" />
+                        <div className="text-left">
+                          <p className="text-white font-semibold">View all releases on GitHub</p>
+                          <p className="text-slate-400 text-sm">Download the latest version for your platform</p>
+                        </div>
+                      </a>
+                    )
                 }
               </div>
+
+              {releaseFetched && release && (
+                <div className="text-center mb-4">
+                  <a
+                    href={`https://github.com/${isManager ? ADMIN_REPO : AGENT_REPO}/releases`}
+                    target="_blank" rel="noreferrer"
+                    className="text-xs text-slate-600 hover:text-slate-400 transition-colors">
+                    View all releases on GitHub ↗
+                  </a>
+                </div>
+              )}
 
               <div className="border border-white/10 bg-white/5 rounded-xl p-4 text-sm text-slate-400">
                 <p className="font-medium text-white mb-1">After installing:</p>
