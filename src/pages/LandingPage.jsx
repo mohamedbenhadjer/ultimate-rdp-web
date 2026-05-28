@@ -7,11 +7,15 @@ import {
 
 const ADMIN_REPO = 'mohamedbenhadjer/ultimate-rdp-admin'
 const AGENT_REPO = 'Flower-City-Online/ultimate-rdp'
+const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN
 
 function useLatestRelease(repo) {
   const [release, setRelease] = useState(null)
   useEffect(() => {
-    fetch(`https://api.github.com/repos/${repo}/releases/latest`)
+    const headers = GITHUB_TOKEN
+      ? { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' }
+      : { Accept: 'application/vnd.github+json' }
+    fetch(`https://api.github.com/repos/${repo}/releases/latest`, { headers })
       .then(r => r.json())
       .then(data => setRelease(data))
       .catch(() => {})
