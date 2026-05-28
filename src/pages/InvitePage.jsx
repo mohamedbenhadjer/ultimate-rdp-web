@@ -100,23 +100,40 @@ export default function InvitePage() {
     const hashParams = parseHash(window.location.hash)
 
     const roleParam = search.get('role')
+
+    // Preferred (non-consuming) flow: Supabase email template links directly to
+    // /invite?token_hash=...&type=invite&role=... — the OTP is NOT consumed here,
+    // it is verified later inside the desktop app when the user submits their password.
+    const tokenHash = search.get('token_hash')
+    const queryType = search.get('type')
+
+    // Legacy / fallback flow: if the email still uses {{ .ConfirmationURL }},
+    // Supabase verifies first and redirects with #access_token=...&refresh_token=...
+    // We still support this so existing pending invites keep working.
     const accessToken = hashParams['access_token']
     const refreshToken = hashParams['refresh_token']
-    const type = hashParams['type']
+    const hashType = hashParams['type']
 
     const detectedPlatform = detectPlatform()
     setPlatform(detectedPlatform)
     setRole(roleParam)
 
-    if (!accessToken || type !== 'invite') {
+    const hasTokenHash = tokenHash && queryType === 'invite'
+    const hasAccessToken = accessToken && hashType === 'invite'
+
+    if (!hasTokenHash && !hasAccessToken) {
       setStatus(STATUS.INVALID)
       return
     }
 
-    const scheme = roleParam === 'manager' ? ADMIN_SCHEME : AGENT_SCHEME
-    const deepLink = `${scheme}://invite?access_token=${encodeURIComponent(accessToken)}&refresh_token=${encodeURIComponent(refreshToken)}&type=invite`
+    const rawRole = (roleParam || '').trim().toLowerCase()
+    const isManager = rawRole === 'manager' || rawRole === 'admin'
+    const scheme = isManager ? ADMIN_SCHEME : AGENT_SCHEME
+    const deepLink = hasTokenHash
+      ? `${scheme}://invite?token_hash=${encodeURIComponent(tokenHash)}&type=invite`
+      : `${scheme}://invite?access_token=${encodeURIComponent(accessToken)}&refresh_token=${encodeURIComponent(refreshToken)}&type=invite`
 
-    const app = roleParam === 'manager' ? 'admin' : 'agent'
+    const app = isManager ? 'admin' : 'agent'
     fetchLatestRelease(app).then(rel => { setRelease(rel); setReleaseFetched(true) })
 
     setStatus(STATUS.TRYING_DEEPLINK)
@@ -142,7 +159,7 @@ export default function InvitePage() {
     }
   }, [])
 
-  const isManager = role === 'manager'
+  const isManager = role === 'manager' || role === 'admin'
   const appName = isManager ? 'Admin App' : 'Agent App'
   const appColor = isManager ? 'text-blue-400' : 'text-emerald-400'
   const appIcon = isManager ? Monitor : Headphones
