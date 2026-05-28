@@ -3,7 +3,6 @@ import { Monitor, Download, Headphones, RefreshCw, AlertCircle, CheckCircle, Sma
 
 const ADMIN_REPO = 'mohamedbenhadjer/ultimate-rdp-admin'
 const AGENT_REPO = 'Flower-City-Online/ultimate-rdp'
-const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN
 
 const ADMIN_SCHEME = 'rdpadmin'
 const AGENT_SCHEME = 'rdpagent'
@@ -27,30 +26,14 @@ function parseHash(hash) {
   return params
 }
 
-function ghHeaders() {
-  return GITHUB_TOKEN
-    ? { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' }
-    : { Accept: 'application/vnd.github+json' }
-}
-
-async function fetchLatestRelease(repo) {
+async function fetchLatestRelease(app) {
   try {
-    const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, { headers: ghHeaders() })
+    const res = await fetch(`/api/releases?app=${app}`)
     if (res.ok) {
       const data = await res.json()
       if (data?.assets?.length > 0) return data
     }
   } catch { /* ignore */ }
-
-  try {
-    const res = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=5`, { headers: ghHeaders() })
-    if (res.ok) {
-      const list = await res.json()
-      const found = Array.isArray(list) && list.find(r => r?.assets?.length > 0)
-      if (found) return found
-    }
-  } catch { /* ignore */ }
-
   return null
 }
 
@@ -133,8 +116,8 @@ export default function InvitePage() {
     const scheme = roleParam === 'manager' ? ADMIN_SCHEME : AGENT_SCHEME
     const deepLink = `${scheme}://invite?access_token=${encodeURIComponent(accessToken)}&refresh_token=${encodeURIComponent(refreshToken)}&type=invite`
 
-    const repo = roleParam === 'manager' ? ADMIN_REPO : AGENT_REPO
-    fetchLatestRelease(repo).then(rel => { setRelease(rel); setReleaseFetched(true) })
+    const app = roleParam === 'manager' ? 'admin' : 'agent'
+    fetchLatestRelease(app).then(rel => { setRelease(rel); setReleaseFetched(true) })
 
     setStatus(STATUS.TRYING_DEEPLINK)
     setDeepLinkAttempted(true)

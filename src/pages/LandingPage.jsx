@@ -7,19 +7,15 @@ import {
 
 const ADMIN_REPO = 'mohamedbenhadjer/ultimate-rdp-admin'
 const AGENT_REPO = 'Flower-City-Online/ultimate-rdp'
-const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN
 
-function useLatestRelease(repo) {
+function useLatestRelease(app) {
   const [release, setRelease] = useState(null)
   useEffect(() => {
-    const headers = GITHUB_TOKEN
-      ? { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json' }
-      : { Accept: 'application/vnd.github+json' }
-    fetch(`https://api.github.com/repos/${repo}/releases/latest`, { headers })
+    fetch(`/api/releases?app=${app}`)
       .then(r => r.json())
       .then(data => setRelease(data))
       .catch(() => {})
-  }, [repo])
+  }, [app])
   return release
 }
 
@@ -269,8 +265,8 @@ function AppCard({ title, badge, badgeColor, tagline, release, repo, platforms }
 }
 
 function Downloads() {
-  const adminRelease = useLatestRelease(ADMIN_REPO)
-  const agentRelease = useLatestRelease(AGENT_REPO)
+  const adminRelease = useLatestRelease('admin')
+  const agentRelease = useLatestRelease('agent')
 
   return (
     <section id="download" className="py-24 px-6">
