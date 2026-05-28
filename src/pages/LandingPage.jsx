@@ -13,8 +13,14 @@ function useLatestRelease(app) {
   useEffect(() => {
     fetch(`/api/releases?app=${app}`)
       .then(r => r.json())
-      .then(data => setRelease(data))
-      .catch(() => {})
+      .then(data => {
+        if (data && data.tag_name && Array.isArray(data.assets)) {
+          setRelease(data)
+        } else {
+          setRelease(null)
+        }
+      })
+      .catch(() => setRelease(null))
   }, [app])
   return release
 }
@@ -250,9 +256,18 @@ function AppCard({ title, badge, badgeColor, tagline, release, repo, platforms }
         </a>
       </div>
       <div className="flex flex-col gap-3">
-        {platforms.map(p => (
-          <DownloadButton key={p.label} {...p} href={getAsset(release, p.pattern)?.browser_download_url} sub={release ? `v${release.tag_name?.replace(/^(admin|agent)-/, '')}` : 'Loading...'} />
-        ))}
+        {platforms.map(p => {
+          const asset = getAsset(release, p.pattern)
+          const version = release?.tag_name?.replace(/^(admin|agent)-/, '')
+          return (
+            <DownloadButton
+              key={p.label}
+              {...p}
+              href={asset?.browser_download_url}
+              sub={release ? (version ? `v${version}` : release.tag_name) : 'Loading...'}
+            />
+          )
+        })}
       </div>
       {release && (
         <p className="text-slate-600 text-xs mt-4 flex items-center gap-1">
