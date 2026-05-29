@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Monitor, Download, Headphones, RefreshCw, AlertCircle, CheckCircle, Smartphone, Laptop } from 'lucide-react'
+import { Monitor, Download, Headphones, RefreshCw, AlertCircle, CheckCircle, Smartphone, Laptop, Lock, Eye, EyeOff, ExternalLink } from 'lucide-react'
+import { supabase } from '../lib/supabase'
 
 const ADMIN_REPO = 'mohamedbenhadjer/ultimate-rdp-admin'
 const AGENT_REPO = 'Flower-City-Online/ultimate-rdp'
@@ -43,15 +44,12 @@ function getAssetUrl(release, pattern) {
 
 const STATUS = {
   LOADING: 'loading',
-  TRYING_DEEPLINK: 'trying',
+  SIGNUP_FORM: 'signup',
+  SUBMITTING: 'submitting',
+  SUCCESS: 'success',
+  OPENING_APP: 'opening',
   NEEDS_DOWNLOAD: 'download',
   INVALID: 'invalid',
-  SUCCESS: 'success',
-}
-
-function PlatformIcon({ platform }) {
-  if (platform === 'android') return <Smartphone className="w-5 h-5" />
-  return <Laptop className="w-5 h-5" />
 }
 
 function DownloadCard({ href, label, sub, icon: Icon, accent }) {
@@ -93,23 +91,23 @@ export default function InvitePage() {
   const [platform, setPlatform] = useState(null)
   const [release, setRelease] = useState(null)
   const [releaseFetched, setReleaseFetched] = useState(false)
-  const [deepLinkAttempted, setDeepLinkAttempted] = useState(false)
+
+  const [tokenHash, setTokenHash] = useState(null)
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
+  const [error, setError] = useState(null)
+  const [sessionTokens, setSessionTokens] = useState(null)
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search)
     const hashParams = parseHash(window.location.hash)
 
     const roleParam = search.get('role')
-
-    // Preferred (non-consuming) flow: Supabase email template links directly to
-    // /invite?token_hash=...&type=invite&role=... — the OTP is NOT consumed here,
-    // it is verified later inside the desktop app when the user submits their password.
-    const tokenHash = search.get('token_hash')
+    const tokenHashParam = search.get('token_hash')
     const queryType = search.get('type')
 
-    // Legacy / fallback flow: if the email still uses {{ .ConfirmationURL }},
-    // Supabase verifies first and redirects with #access_token=...&refresh_token=...
-    // We still support this so existing pending invites keep working.
     const accessToken = hashParams['access_token']
     const refreshToken = hashParams['refresh_token']
     const hashType = hashParams['type']
@@ -118,7 +116,7 @@ export default function InvitePage() {
     setPlatform(detectedPlatform)
     setRole(roleParam)
 
-    const hasTokenHash = tokenHash && queryType === 'invite'
+    const hasTokenHash = tokenHashParam && queryType === 'invite'
     const hasAccessToken = accessToken && hashType === 'invite'
 
     if (!hasTokenHash && !hasAccessToken) {
@@ -128,34 +126,15 @@ export default function InvitePage() {
 
     const rawRole = (roleParam || '').trim().toLowerCase()
     const isManager = rawRole === 'manager' || rawRole === 'admin'
-    const scheme = isManager ? ADMIN_SCHEME : AGENT_SCHEME
-    const deepLink = hasTokenHash
-      ? `${scheme}://invite?token_hash=${encodeURIComponent(tokenHash)}&type=invite`
-      : `${scheme}://invite?access_token=${encodeURIComponent(accessToken)}&refresh_token=${encodeURIComponent(refreshToken)}&type=invite`
-
     const app = isManager ? 'admin' : 'agent'
     fetchLatestRelease(app).then(rel => { setRelease(rel); setReleaseFetched(true) })
 
-    setStatus(STATUS.TRYING_DEEPLINK)
-    setDeepLinkAttempted(true)
-
-    window.location.href = deepLink
-
-    const timer = setTimeout(() => {
-      setStatus(STATUS.NEEDS_DOWNLOAD)
-    }, 900)
-
-    const handleVisibility = () => {
-      if (document.hidden) {
-        clearTimeout(timer)
-        setStatus(STATUS.SUCCESS)
-      }
-    }
-    document.addEventListener('visibilitychange', handleVisibility)
-
-    return () => {
-      clearTimeout(timer)
-      document.removeEventListener('visibilitychange', handleVisibility)
+    if (hasTokenHash) {
+      setTokenHash(tokenHashParam)
+      setStatus(STATUS.SIGNUP_FORM)
+    } else if (hasAccessToken) {
+      setSessionTokens({ accessToken, refreshToken })
+      setStatus(STATUS.SIGNUP_FORM)
     }
   }, [])
 
@@ -163,19 +142,88 @@ export default function InvitePage() {
   const appName = isManager ? 'Admin App' : 'Agent App'
   const appColor = isManager ? 'text-blue-400' : 'text-emerald-400'
   const appIcon = isManager ? Monitor : Headphones
+  const scheme = isManager ? ADMIN_SCHEME : AGENT_SCHEME
+
+  const openApp = (accessToken, refreshToken) => {
+    const deepLink = `${scheme}://login?access_token=${encodeURIComponent(accessToken)}&refresh_token=${encodeURIComponent(refreshToken)}`
+
+    setStatus(STATUS.OPENING_APP)
+    window.location.href = deepLink
+
+    setTimeout(() => {
+      setStatus(STATUS.NEEDS_DOWNLOAD)
+    }, 900)
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        setStatus(STATUS.SUCCESS)
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setError(null)
+
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters')
+      return
+    }
+    if (password !== confirmPassword) {
+      setError('Passwords do not match')
+      return
+    }
+
+    setStatus(STATUS.SUBMITTING)
+
+    try {
+      if (tokenHash) {
+        const { data, error: verifyError } = await supabase.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: 'invite',
+        })
+        if (verifyError) throw verifyError
+      } else if (sessionTokens) {
+        const { error: sessionError } = await supabase.auth.setSession({
+          access_token: sessionTokens.accessToken,
+          refresh_token: sessionTokens.refreshToken,
+        })
+        if (sessionError) throw sessionError
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: password,
+      })
+      if (updateError) throw updateError
+
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
+        setSessionTokens({ accessToken: session.access_token, refreshToken: session.refresh_token })
+        openApp(session.access_token, session.refresh_token)
+      } else {
+        setError('Registration succeeded but could not retrieve session. Please open the app and log in with your new password.')
+        setStatus(STATUS.SIGNUP_FORM)
+      }
+    } catch (err) {
+      setError(err.message || 'An unexpected error occurred')
+      setStatus(STATUS.SIGNUP_FORM)
+    }
+  }
 
   const getDownloadLinks = () => {
     if (!release) return []
     if (isManager) {
       return [
-        { label: 'Windows Installer', sub: 'Download & install, then re-open your invite email', icon: Laptop, href: getAssetUrl(release, /-setup\.exe$/), accent: platform === 'windows' },
-        { label: 'Linux (.deb)', sub: 'Download & install, then re-open your invite email', icon: Laptop, href: getAssetUrl(release, /\.deb$/), accent: platform === 'linux' },
+        { label: 'Windows Installer', sub: 'Download & install, then open the app', icon: Laptop, href: getAssetUrl(release, /-setup\.exe$/), accent: platform === 'windows' },
+        { label: 'Linux (.deb)', sub: 'Download & install, then open the app', icon: Laptop, href: getAssetUrl(release, /\.deb$/), accent: platform === 'linux' },
       ]
     }
     return [
-      { label: 'Android (APK)', sub: 'Download & install, then re-open your invite email', icon: Smartphone, href: getAssetUrl(release, /\.apk$/), accent: platform === 'android' },
-      { label: 'Windows Installer', sub: 'Download & install, then re-open your invite email', icon: Laptop, href: getAssetUrl(release, /-setup\.exe$/), accent: platform === 'windows' },
-      { label: 'Linux (.deb)', sub: 'Download & install, then re-open your invite email', icon: Laptop, href: getAssetUrl(release, /\.deb$/), accent: platform === 'linux' },
+      { label: 'Android (APK)', sub: 'Download & install, then open the app', icon: Smartphone, href: getAssetUrl(release, /\.apk$/), accent: platform === 'android' },
+      { label: 'Windows Installer', sub: 'Download & install, then open the app', icon: Laptop, href: getAssetUrl(release, /-setup\.exe$/), accent: platform === 'windows' },
+      { label: 'Linux (.deb)', sub: 'Download & install, then open the app', icon: Laptop, href: getAssetUrl(release, /\.deb$/), accent: platform === 'linux' },
     ]
   }
 
@@ -196,22 +244,106 @@ export default function InvitePage() {
           {status === STATUS.LOADING && (
             <div className="text-center">
               <RefreshCw className="w-10 h-10 text-blue-400 animate-spin mx-auto mb-4" />
-              <p className="text-slate-400">Processing your invitation…</p>
+              <p className="text-slate-400">Processing your invitation...</p>
             </div>
           )}
 
-          {status === STATUS.TRYING_DEEPLINK && (
+          {(status === STATUS.SIGNUP_FORM || status === STATUS.SUBMITTING) && (
+            <div>
+              <div className="text-center mb-8">
+                <div className="w-16 h-16 rounded-2xl bg-blue-500/15 flex items-center justify-center mx-auto mb-6">
+                  <Lock className={`w-8 h-8 ${appColor}`} />
+                </div>
+                <h1 className="text-white text-2xl font-bold mb-2">Set Your Password</h1>
+                <p className="text-slate-400 text-sm leading-relaxed">
+                  Welcome to <span className={`font-semibold ${appColor}`}>RDP Bridge {isManager ? 'Admin' : 'Agent'}</span>! Set a password to complete your account setup.
+                </p>
+              </div>
+
+              {error && (
+                <div className="flex items-start gap-3 border border-red-500/30 bg-red-500/10 rounded-xl px-4 py-3 mb-6">
+                  <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+                  <p className="text-red-300 text-sm">{error}</p>
+                </div>
+              )}
+
+              <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">New Password</label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="At least 6 characters"
+                      required
+                      minLength={6}
+                      disabled={status === STATUS.SUBMITTING}
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/30 transition-colors disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                    >
+                      {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">Confirm Password</label>
+                  <div className="relative">
+                    <input
+                      type={showConfirm ? 'text' : 'password'}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Re-enter your password"
+                      required
+                      minLength={6}
+                      disabled={status === STATUS.SUBMITTING}
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/30 transition-colors disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirm(!showConfirm)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                    >
+                      {showConfirm ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={status === STATUS.SUBMITTING}
+                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white font-semibold rounded-xl px-4 py-3 mt-2 transition-colors flex items-center justify-center gap-2"
+                >
+                  {status === STATUS.SUBMITTING ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Setting up your account...
+                    </>
+                  ) : (
+                    'Set Password & Complete Signup'
+                  )}
+                </button>
+              </form>
+            </div>
+          )}
+
+          {status === STATUS.OPENING_APP && (
             <div className="text-center">
               <div className="w-16 h-16 rounded-2xl bg-blue-500/15 flex items-center justify-center mx-auto mb-6">
                 {(() => { const Icon = appIcon; return <Icon className={`w-8 h-8 ${appColor}`} /> })()}
               </div>
-              <h1 className="text-white text-2xl font-bold mb-2">Opening {appName}…</h1>
+              <h1 className="text-white text-2xl font-bold mb-2">Opening {appName}...</h1>
               <p className="text-slate-400 text-sm mb-2">
-                A dialog should appear to open RDP Bridge.
+                Your account is ready! A dialog should appear to open RDP Bridge.
               </p>
               <div className="flex items-center justify-center gap-2 mt-4">
                 <RefreshCw className="w-4 h-4 text-blue-400 animate-spin" />
-                <span className="text-slate-500 text-sm">Waiting for app…</span>
+                <span className="text-slate-500 text-sm">Waiting for app...</span>
               </div>
             </div>
           )}
@@ -221,9 +353,9 @@ export default function InvitePage() {
               <div className="w-16 h-16 rounded-2xl bg-emerald-500/15 flex items-center justify-center mx-auto mb-6">
                 <CheckCircle className="w-8 h-8 text-emerald-400" />
               </div>
-              <h1 className="text-white text-2xl font-bold mb-2">App opened!</h1>
+              <h1 className="text-white text-2xl font-bold mb-2">You&apos;re all set!</h1>
               <p className="text-slate-400 text-sm">
-                Complete your signup in the RDP Bridge app.
+                Your account has been created and the app is opening. You&apos;re already logged in.
               </p>
             </div>
           )}
@@ -238,7 +370,7 @@ export default function InvitePage() {
                 This link is missing required parameters or has already been used. Please ask your admin to resend the invitation.
               </p>
               <a href="/" className="inline-flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm transition-colors">
-                ← Back to homepage
+                &larr; Back to homepage
               </a>
             </div>
           )}
@@ -246,14 +378,14 @@ export default function InvitePage() {
           {status === STATUS.NEEDS_DOWNLOAD && (
             <>
               <div className="text-center mb-8">
-                <div className="w-16 h-16 rounded-2xl bg-amber-500/15 flex items-center justify-center mx-auto mb-6">
-                  <Download className="w-8 h-8 text-amber-400" />
+                <div className="w-16 h-16 rounded-2xl bg-emerald-500/15 flex items-center justify-center mx-auto mb-6">
+                  <CheckCircle className="w-8 h-8 text-emerald-400" />
                 </div>
                 <h1 className="text-white text-2xl font-bold mb-2">
-                  {appName} isn&apos;t installed yet
+                  Account created successfully!
                 </h1>
                 <p className="text-slate-400 text-sm leading-relaxed">
-                  Download and install the app below.
+                  Your password has been set. Download and install the {appName} to get started.
                   {platform !== 'unknown' && (
                     <span className="text-slate-300"> We detected you&apos;re on <strong>{platform.charAt(0).toUpperCase() + platform.slice(1)}</strong> — your recommended download is highlighted.</span>
                   )}
@@ -265,7 +397,7 @@ export default function InvitePage() {
                   ? (
                     <div className="text-center py-8">
                       <RefreshCw className="w-5 h-5 text-blue-400 animate-spin mx-auto mb-2" />
-                      <p className="text-slate-500 text-sm">Fetching latest release…</p>
+                      <p className="text-slate-500 text-sm">Fetching latest release...</p>
                     </div>
                   )
                   : release
@@ -291,7 +423,7 @@ export default function InvitePage() {
                     href={`https://github.com/${isManager ? ADMIN_REPO : AGENT_REPO}/releases`}
                     target="_blank" rel="noreferrer"
                     className="text-xs text-slate-600 hover:text-slate-400 transition-colors">
-                    View all releases on GitHub ↗
+                    View all releases on GitHub &nearr;
                   </a>
                 </div>
               )}
@@ -299,19 +431,20 @@ export default function InvitePage() {
               <div className="border border-white/10 bg-white/5 rounded-xl p-4 text-sm text-slate-400">
                 <p className="font-medium text-white mb-1">After installing:</p>
                 <ol className="list-decimal list-inside space-y-1">
-                  <li>Open the app once to complete setup</li>
-                  <li>Come back and re-click the invite link in your email</li>
-                  <li>The app will open automatically and prompt you to set your password</li>
+                  <li>Open the app</li>
+                  <li>Log in with your email and the password you just set</li>
                 </ol>
               </div>
 
-              <div className="mt-6 text-center">
-                <button
-                  onClick={() => window.location.reload()}
-                  className="text-sm text-blue-400 hover:text-blue-300 transition-colors">
-                  Already installed? Try opening again →
-                </button>
-              </div>
+              {sessionTokens && (
+                <div className="mt-6 text-center">
+                  <button
+                    onClick={() => openApp(sessionTokens.accessToken, sessionTokens.refreshToken)}
+                    className="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                    Already installed? Open app now &rarr;
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>

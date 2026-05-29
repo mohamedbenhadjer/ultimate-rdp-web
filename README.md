@@ -1,16 +1,82 @@
-# React + Vite
+# RDP Bridge Web
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Marketing and invite landing page for RDP Bridge — a remote support management platform.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Marketing landing page with download links
+- Invite signup flow with password setup
+- Automatic deep-link to desktop/mobile apps after signup
+- GitHub Releases integration for download links
 
-## React Compiler
+## Tech Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- React 19 + Vite 8
+- Tailwind CSS v4
+- Supabase (authentication)
+- Vercel (hosting)
 
-## Expanding the ESLint configuration
+## Environment Variables
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Create a `.env.local` file in the project root:
+
+```env
+VITE_SUPABASE_URL=your_supabase_project_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+For production deployment on Vercel, add these as environment variables in the Vercel dashboard.
+
+## Development
+
+```bash
+# Install dependencies
+npm install
+
+# Start dev server
+npm run dev
+
+# Build for production
+npm run build
+
+# Preview production build
+npm run preview
+```
+
+## Deployment
+
+### Vercel
+
+1. Connect your GitHub repository to Vercel
+2. Add environment variables in Vercel dashboard:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+3. Deploy
+
+The `vercel.json` configuration handles SPA routing automatically.
+
+## Invite Flow
+
+1. Admin sends invite via the admin app
+2. User receives email with link: `/invite?token_hash=...&type=invite&role=agent|manager`
+3. User lands on website and sees password setup form
+4. User sets password → Supabase verifies OTP and creates account
+5. Website fires deep link with session tokens: `rdpagent://login?access_token=...&refresh_token=...`
+6. App opens and user is automatically logged in
+
+## API Routes
+
+- `/api/releases?app=admin|agent` — Proxies GitHub Releases API for download links
+
+## Project Structure
+
+```
+src/
+├── lib/
+│   └── supabase.js          # Supabase client
+├── pages/
+│   ├── LandingPage.jsx      # Marketing page
+│   └── InvitePage.jsx       # Invite signup flow
+├── App.jsx                  # Router
+└── main.jsx                 # Entry point
+```
